@@ -1,14 +1,7 @@
+#Load libraries
 library(leaflet)
 
 # Choices for drop-downs
-vars <- c(
-  "Is SuperZIP?" = "superzip",
-  "Centile score" = "centile",
-  "College education" = "college",
-  "Median income" = "income",
-  "Population" = "adultpop"
-)
-
 sex.vars<- c(
   "Female" = "Female",
   "Male" = "Male"
@@ -25,13 +18,14 @@ size.vars<- c(
   "Sub-legal to Legal" = "Sub-legal to Legal"
 )
 
-navbarPage("Recaptures", id="nav",
+# Set up user interface
+navbarPage("Interactive Recaptures", id="nav",
            
            tabPanel("Interactive map",
                     div(class="outer",
                         
                         tags$head(
-                          # Include our custom CSS
+                          # Include custom CSS
                           includeCSS("styles.css"),
                           includeScript("gomap.js")
                         ),
