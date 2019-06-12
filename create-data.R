@@ -42,9 +42,9 @@ summary(dat)
 length(unique(dat$Sample)) # 1526
 
 # Create a releases and a recaptures dataframe ----
-dat.recaps<-dat%>%
+dat.recaptures<-dat%>%
   dplyr::filter(Recapture%in%c("TRUE"))%>%
-  dplyr::select(-c(Source,Sample,Recapture,Outlier,Location))%>%
+  dplyr::select(-c(Source,Sample,Recapture,Outlier,Location,Sex))%>%
   glimpse()
 
 dat.releases<-dat%>%
@@ -71,144 +71,104 @@ double.release<-dat.releases%>%
 extra.recaps<-dat.releases%>%
   filter(Tag.number%in%c(as.vector(double.release$Tag.number)))
 
-# Decided to just filter these out - maybe discuss with Tim if they should be added back in ----
-# am also just going to delete them all
+# Decided I am going to just filter these out - maybe discuss with Tim if they should be added back in ----
 dat.releases<-dat.releases%>%
   filter(!Tag.number%in%c(as.vector(double.release$Tag.number)))
 
 # Create dataframe for releases that are recaptured to join back into recaptures ----
-dat.releases.caught.again<-semi_join(dat.releases,dat.recaps,by="Tag.number")%>%
-  dplyr::select(-c(Source,Sample,Sex,Colour,Outlier,Location,Recapture,Carapace.length))%>%
+dat.releases.caught.again<-semi_join(dat.releases,dat.recaptures,by="Tag.number")%>%
+  dplyr::select(-c(Source,Sample,Outlier,Recapture))%>%
   glimpse()
 
-# create initial locations for each lobster ----
-release.locations.and.sex<-semi_join(dat.releases,dat.recaps,by="Tag.number")%>%
+# create initial release data for each lobster ----
+release.locations.and.sex<-semi_join(dat.releases,dat.recaptures,by="Tag.number")%>%
   distinct(Tag.number,Location,Sex,Colour)%>%
   dplyr::rename(Release.location=Location,Release.colour=Colour)%>%
   glimpse()
 
-# Create list of lobsters that have changed size (sub-legal to legal)
-size.at.release<-semi_join(dat.releases,dat.recaps,by="Tag.number")%>%
+# Create size classes ----
+size.at.release<-semi_join(dat.releases,dat.recaptures,by="Tag.number")%>%
   dplyr::select(Tag.number,Carapace.length)%>%
-  dplyr::mutate(Size.at.release=ifelse(Carapace.length<76,"Sub-legal","Legal"))%>%
-  dplyr::select(Tag.number,Size.at.release)
+  dplyr::mutate(Size.class.at.release=ifelse(Carapace.length<76,"Sub-legal","Legal"))%>%
+  dplyr::rename(Carapace.length.at.release=Carapace.length)%>%
+  dplyr::select(Tag.number,Size.class.at.release,Carapace.length.at.release)
 
-size.at.last.recapture<-dat.recaps%>%
+size.at.last.recapture<-dat.recaptures%>%
   dplyr::arrange(Tag.number,desc(Date))%>%
   dplyr::group_by(Tag.number)%>%
   slice(1)%>%
   dplyr::ungroup()%>%
-  dplyr::mutate(Size.at.recapture=ifelse(Carapace.length<76,"Sub-legal","Legal"))%>%
-  dplyr::select(Tag.number,Size.at.recapture)
+  dplyr::mutate(Size.class.at.last.recapture=ifelse(Carapace.length<76,"Sub-legal","Legal"))%>%
+  dplyr::rename(Carapace.length.at.last.recapture=Carapace.length)%>%
+  dplyr::select(Tag.number,Size.class.at.last.recapture,Carapace.length.at.last.recapture)
 
-sizes<-left_join(size.at.release,size.at.last.recapture)%>%
-  dplyr::mutate(Size=ifelse((Size.at.release==Size.at.recapture),as.character(Size.at.recapture),"Changed to legal size"))
+size.classes<-left_join(size.at.release,size.at.last.recapture)
 
-# Create data for map ----
+# Create recapture data for the map ----
 # Good tag to check 191410 (to see if everything has worked)
 dat.map.recaptures<-dat.releases.caught.again%>%
-  dplyr::rename(Release.latitude=Latitude,Release.longitude=Longitude,Release.date=Date)%>% #
-  left_join(dat.recaps)%>%
+  dplyr::rename(Release.latitude=Latitude,Release.longitude=Longitude,Release.date=Date,Release.colour=Colour,Release.location=Location,Release.carapace.length=Carapace.length)%>% #
+  left_join(dat.recaptures)%>%
   bind_rows(dat.releases.caught.again)%>%
   arrange(Tag.number,Date)%>%
   dplyr::group_by(Tag.number)%>%
   dplyr::mutate(Release.latitude=lag(Latitude))%>% # Need to lobsters caught more than twice
   dplyr::mutate(Release.longitude=lag(Longitude))%>%
   dplyr::mutate(Release.date=lag(Date))%>% # To get last time it was caught
+  dplyr::mutate(Release.carapace.length=lag(Carapace.length))%>% # To get last time it was caught
   dplyr::filter(!is.na(Sex))%>% # Get rid of initial ones
-  dplyr::rename(Recapture.latitude=Latitude,Recapture.longitude=Longitude,Recapture.date=Date,Recapture.colour=Colour)%>%
+  dplyr::filter(!is.na(Release.colour))%>% # Get rid of initial ones
+  dplyr::rename(Recapture.latitude=Latitude,Recapture.longitude=Longitude,Recapture.date=Date,Recapture.colour=Colour,Recapture.carapace.length=Carapace.length)%>%
   dplyr::mutate(Days.between.captures = (as.Date(as.character(Recapture.date), format="%Y-%m-%d")) - (as.Date(as.character(Release.date))))%>%
-  dplyr::mutate(Labels=paste("Tag ",Tag.number,". At liberty for ",Days.between.captures," days before being caught again on ",Recapture.date," (",Carapace.length," mm).",sep=""))%>%
+  dplyr::mutate(Growth=Recapture.carapace.length-Release.carapace.length)%>%
   dplyr::ungroup()%>%
   glimpse()
 
-# Need dots for initial releases
-dat.map.releases<-semi_join(dat.releases,dat.recaps,by="Tag.number")%>%
+# Create initial release data for the map ----
+dat.map.releases<-semi_join(dat.releases,dat.recaptures,by="Tag.number")%>%
   dplyr::select(-c(Source,Sample,Outlier,Location,Recapture))%>%
-  dplyr::rename(Release.latitude=Latitude,Release.longitude=Longitude,Release.date=Date,Release.colour=Colour)%>%
-  dplyr::mutate(Labels=paste("Tag ",Tag.number,". A ",Sex," lobster, first caught on  ",Release.date," (",Carapace.length," mm).",sep=""))%>%
+  dplyr::rename(Release.latitude=Latitude,Release.longitude=Longitude,Release.date=Date,Release.colour=Colour,Release.carapace.length=Carapace.length)%>%
   glimpse()
 
-# Have pots with multiple dots on the same exact position ----
-# So need to combine labels together, but also have releases and recaptures on the same point
+# create labels for recaptures ----
+recapture.labels<-dat.map.recaptures%>%
+  dplyr::mutate(Labels=paste("<b>Tag: </b>",Tag.number,"<br>",
+                             "<b>Sex: </b>",Sex,"<br>",
+                             "<b>Colour: </b>",Recapture.colour,"<br>",
+                             "<b>Current carapace length: </b>",Recapture.carapace.length," mm","<br>",
+                             "<b>Release date: </b>",Release.date,"<br>",
+                             "<b>Recapture date: </b>",Recapture.date,"<br>",
+                             "<b>Growth: </b>",Growth," mm","<br>",
+                             "(",Days.between.captures," days between captures)",sep=""))
 
-# 1. make new data frame for both recaptures and releases with same lat and lon column
-# 2. figure out double ups
-# 3. paste together labels
-# 4. Would be nice to have number caught at that point
+# create labels for releases ----
+releases.labels<-dat.map.releases%>%
+  dplyr::mutate(Labels=paste("<b>Tag: </b>",Tag.number,"<br>",
+                             "<b>Sex: </b>",Sex,"<br>",
+                             "<b>Colour: </b>",Release.colour,"<br>",
+                             "<b>Carapace length: </b>",Release.carapace.length," mm","<br>",
+                             "<b>Release date: </b>",Release.date,"<br>"))
 
+# Create point data ----
 glimpse(dat.map.releases)
 glimpse(dat.map.recaptures)
 
-dat.dots.recap<-dat.map.recaptures%>%
+points.recaptures<-dat.map.recaptures%>%
+  left_join(.,recapture.labels)%>%
   dplyr::rename(Latitude=Recapture.latitude,Longitude=Recapture.longitude)%>%
-  dplyr::select(Tag.number,Latitude,Longitude,Labels,Carapace.length,Recapture.colour)%>%
-  left_join(.,sizes)
+  left_join(.,size.classes)
 
-dat.dots.release<-dat.map.releases%>%
+points.releases<-dat.map.releases%>%
+  left_join(.,releases.labels)%>%
   dplyr::rename(Latitude=Release.latitude,Longitude=Release.longitude)%>%
-  dplyr::select(Tag.number,Latitude,Longitude,Labels,Carapace.length,Release.colour)%>%
-  left_join(.,sizes)
+  #dplyr::select(Tag.number,Latitude,Longitude,Labels,Carapace.length,Release.colour)%>%
+  left_join(.,size.classes)
 
-sub.legal.labels<-bind_rows(dat.dots.recap,dat.dots.release)%>%
-  dplyr::filter(Size%in%c("Sub-legal"))%>%
-  dplyr::group_by(Latitude,Longitude)%>%
-  dplyr::summarise(Labels=paste(strwrap(Labels, width = 100), collapse = "<br> <br>"))%>%
-  ungroup()%>%
-  glimpse()
-
-legal.labels<-bind_rows(dat.dots.recap,dat.dots.release)%>%
-  dplyr::filter(Size%in%c("Legal"))%>%
-  dplyr::group_by(Latitude,Longitude)%>%
-  dplyr::summarise(Labels=paste(strwrap(Labels, width = 100), collapse = "<br> <br>"))%>%
-  ungroup()
-
-sub.legal.to.legal.labels<-bind_rows(dat.dots.recap,dat.dots.release)%>%
-  dplyr::filter(Size%in%c("Changed to legal size"))%>%
-  dplyr::group_by(Latitude,Longitude)%>%
-  dplyr::summarise(Labels=paste(strwrap(Labels, width = 100), collapse = "<br> <br>"))%>%
-  ungroup()
-
-all.labels<-bind_rows(dat.dots.recap,dat.dots.release)%>%
-  dplyr::group_by(Latitude,Longitude)%>%
-  dplyr::summarise(Labels=paste(strwrap(Labels, width = 100), collapse = "<br> <br>"))%>%
-  ungroup()
-
-dat.map.all<-bind_rows(dat.dots.recap,dat.dots.release)%>%
-  dplyr::select(-c(Labels))%>%
+dat.map.all<-bind_rows(points.recaptures,points.releases)%>%
   left_join(.,release.locations.and.sex)%>%
-  left_join(.,all.labels)%>%
   arrange((Latitude))%>%
   mutate(Release.location = factor(Release.location, levels = c("Seven Mile","Rivermouth","Irwin Reef", "Cliff Head","Golden Ridge")))%>%
   glimpse()
-
-dat.map.sub.legal<-bind_rows(dat.dots.recap,dat.dots.release)%>%
-  dplyr::select(-c(Labels))%>%
-  left_join(.,release.locations.and.sex)%>%
-  left_join(.,sub.legal.labels)%>%
-  arrange((Latitude))%>%
-  mutate(Release.location = factor(Release.location, levels = c("Seven Mile","Rivermouth","Irwin Reef", "Cliff Head","Golden Ridge")))%>%
-  filter(Size%in%c("Sub-legal"))%>%
-  glimpse()
-
-dat.map.legal<-bind_rows(dat.dots.recap,dat.dots.release)%>%
-  dplyr::select(-c(Labels))%>%
-  left_join(.,release.locations.and.sex)%>%
-  left_join(.,legal.labels)%>%
-  arrange((Latitude))%>%
-  mutate(Release.location = factor(Release.location, levels = c("Seven Mile","Rivermouth","Irwin Reef", "Cliff Head","Golden Ridge")))%>%
-  filter(Size%in%c("Legal"))%>%
-  glimpse()
-
-dat.map.sub.legal.to.legal<-bind_rows(dat.dots.recap,dat.dots.release)%>%
-  dplyr::select(-c(Labels))%>%
-  left_join(.,release.locations.and.sex)%>%
-  left_join(.,sub.legal.to.legal.labels)%>%
-  arrange((Latitude))%>%
-  mutate(Release.location = factor(Release.location, levels = c("Seven Mile","Rivermouth","Irwin Reef", "Cliff Head","Golden Ridge")))%>%
-  filter(Size%in%c("Changed to legal size"))%>%
-  glimpse()
-
 
 unique(dat.map.all$Release.location)
 
